@@ -2,7 +2,7 @@
 
 // Firefox exposes the standard `browser` namespace; Chromium exposes `chrome`.
 // Both support Promise-based WebExtension APIs used by this extension.
-const extensionApi = globalThis.browser ?? globalThis.chrome;
+const extensionApi = globalThis.browser?.runtime?.getBrowserInfo ? globalThis.browser : globalThis.chrome;
 
 const KEY_GLOBAL = "gainPercent::GLOBAL";
 const keyForHost = (host) => `gainPercent::HOST::${host}`;

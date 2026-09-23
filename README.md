@@ -25,7 +25,7 @@ volume-booster/
 └── CHANGELOG.md
 ```
 
-The shared JavaScript uses `globalThis.browser ?? globalThis.chrome`, so Firefox and Chromium use the same runtime implementation. Browser-specific differences stay in their manifests.
+The shared JavaScript selects the Promise-based `browser.*` namespace on Firefox and `chrome.*` on Chromium, so both browsers use the same runtime implementation. Browser-specific differences stay in their manifests.
 
 ## Build
 
@@ -60,7 +60,7 @@ dist/
 3. Choose **Load Temporary Add-on…**.
 4. Select `dist/firefox/manifest.json`.
 
-The Firefox manifest contains a dedicated Gecko extension ID and declares that the extension does not collect or transmit data.
+The Firefox target requires Firefox 140 or later, contains a dedicated Gecko extension ID, and declares that the extension does not collect or transmit data.
 
 ## Features
 

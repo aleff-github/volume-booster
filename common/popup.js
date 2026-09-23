@@ -1,4 +1,4 @@
-const extensionApi = globalThis.browser ?? globalThis.chrome;
+const extensionApi = globalThis.browser?.runtime?.getBrowserInfo ? globalThis.browser : globalThis.chrome;
 
 const slider = document.getElementById("gain");
 const val = document.getElementById("val");
