@@ -1,129 +1,266 @@
 // Volume Booster content script (all frames)
 
+const KEY_GLOBAL = "gainPercent::GLOBAL";
+const keyForHost = (host) => `gainPercent::HOST::${host}`;
+const MAX_GAIN_PERCENT = 1000;
+
 let audioCtx = null;
 let preGain = null;
-let compressor = null;
+let limiter = null;
+let desiredGainPercent = 100;
 
-const sources = new Map(); // HTMLMediaElement -> MediaElementAudioSourceNode
-
-const KEY_GLOBAL = "gainPercent::GLOBAL";
-const keyForHost = (h) => `gainPercent::HOST::${h}`;
-const MAX_GAIN_MULT = 10.0; // 1000%
+// Keep the MediaElementAudioSourceNode associated with each media element.
+// Reusing the same node avoids trying to recreate a source for an element
+// that was removed and later reinserted into the DOM.
+const sources = new WeakMap();
+const monitoredMedia = new WeakSet();
+const observedRoots = new WeakSet();
 
 function getHost() {
-  try { return location.hostname || ""; } catch { return ""; }
+  // Use the top-level site when possible so media in embedded frames follows
+  // the same per-site override as the page the user sees.
+  if (window === window.top) {
+    return location.hostname || "";
+  }
+
+  try {
+    return window.top.location.hostname || location.hostname || "";
+  } catch {
+    // Cross-origin frames cannot read window.top.location. document.referrer
+    // normally exposes at least the embedding origin, which is sufficient for
+    // first-level embeds. Fall back to the frame's own hostname otherwise.
+    try {
+      return new URL(document.referrer).hostname || location.hostname || "";
+    } catch {
+      return location.hostname || "";
+    }
+  }
+}
+
+function sanitizeGain(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 100;
+  return Math.max(0, Math.min(MAX_GAIN_PERCENT, n));
 }
 
 function ensureGraph() {
   if (audioCtx) return;
 
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextCtor) return;
 
+  audioCtx = new AudioContextCtor();
   preGain = audioCtx.createGain();
-  preGain.gain.value = 1.0;
+  limiter = audioCtx.createDynamicsCompressor();
 
-  compressor = audioCtx.createDynamicsCompressor();
-  // "Limiter-ish" (riduce i picchi quando alzi tanto)
-  compressor.threshold.value = -12;
-  compressor.knee.value = 0;
-  compressor.ratio.value = 20;
-  compressor.attack.value = 0.003;
-  compressor.release.value = 0.12;
+  // Near-transparent at <= 100%, limiter-like behavior above 100%.
+  limiter.threshold.value = -1;
+  limiter.knee.value = 0;
+  limiter.ratio.value = desiredGainPercent > 100 ? 20 : 1;
+  limiter.attack.value = 0.003;
+  limiter.release.value = 0.12;
 
-  preGain.connect(compressor);
-  compressor.connect(audioCtx.destination);
+  preGain.gain.value = desiredGainPercent / 100;
+  preGain.connect(limiter);
+  limiter.connect(audioCtx.destination);
 }
 
-function setGainPercent(gainPercent) {
-  ensureGraph();
+function updateGraphGain() {
+  if (!audioCtx || !preGain || !limiter) return;
 
-  const g = Math.max(0, Math.min(MAX_GAIN_MULT, Number(gainPercent) / 100));
-  preGain.gain.setValueAtTime(g, audioCtx.currentTime);
+  const gain = desiredGainPercent / 100;
+  preGain.gain.setValueAtTime(gain, audioCtx.currentTime);
+  limiter.ratio.setValueAtTime(desiredGainPercent > 100 ? 20 : 1, audioCtx.currentTime);
 
-  // Prova a "resume" (spesso su YouTube funziona perché l'utente ha già interagito)
   if (audioCtx.state === "suspended") {
     audioCtx.resume().catch(() => {});
   }
 }
 
-function attachMedia(el) {
-  if (!(el instanceof HTMLMediaElement)) return;
-  if (sources.has(el)) return;
+function setGainPercent(value) {
+  desiredGainPercent = sanitizeGain(value);
+  updateGraphGain();
+}
 
-  ensureGraph();
+function canRouteThroughWebAudio(element) {
+  if (element.srcObject) return true;
+
+  const rawSource = element.currentSrc || element.getAttribute("src") || "";
+  if (!rawSource) return false;
 
   try {
-    // Nota: per lo stesso <video>/<audio> si può chiamare SOLO una volta
-    const src = audioCtx.createMediaElementSource(el);
-    src.connect(preGain);
-    sources.set(el, src);
+    const sourceUrl = new URL(rawSource, location.href);
+
+    if (sourceUrl.protocol === "blob:" || sourceUrl.protocol === "data:") {
+      return true;
+    }
+
+    if (sourceUrl.origin === location.origin) {
+      return true;
+    }
+
+    // Cross-origin media without CORS can become silent when routed through
+    // MediaElementAudioSourceNode. Only try it when the element explicitly
+    // requests CORS-enabled media.
+    return Boolean(element.crossOrigin);
   } catch {
-    // CORS/DRM/limitazioni player: non sempre reindirizzabile
+    return false;
   }
 }
 
-function detachMedia(el) {
-  const src = sources.get(el);
-  if (!src) return;
-  try { src.disconnect(); } catch {}
-  sources.delete(el);
+function attachMedia(element) {
+  if (!(element instanceof HTMLMediaElement)) return;
+
+  const existing = sources.get(element);
+  if (existing) {
+    ensureGraph();
+    if (!preGain) return;
+
+    if (!existing.connected) {
+      try {
+        existing.node.connect(preGain);
+        existing.connected = true;
+      } catch {
+        // Ignore players that cannot be reconnected.
+      }
+    }
+    return;
+  }
+
+  if (!canRouteThroughWebAudio(element)) return;
+
+  ensureGraph();
+  if (!audioCtx || !preGain) return;
+
+  try {
+    const node = audioCtx.createMediaElementSource(element);
+    node.connect(preGain);
+    sources.set(element, { node, connected: true });
+    updateGraphGain();
+  } catch {
+    // Some cross-origin, DRM, or custom players cannot be redirected
+    // through Web Audio. Leave their normal playback untouched.
+  }
 }
 
-function scanTree(root) {
-  root.querySelectorAll?.("audio, video").forEach(attachMedia);
 
-  // Shadow DOM "open"
-  root.querySelectorAll?.("*").forEach((el) => {
-    if (el.shadowRoot) scanTree(el.shadowRoot);
+function monitorMedia(element) {
+  if (!(element instanceof HTMLMediaElement)) return;
+
+  if (!monitoredMedia.has(element)) {
+    monitoredMedia.add(element);
+
+    element.addEventListener("loadedmetadata", () => attachMedia(element));
+    element.addEventListener("play", () => {
+      attachMedia(element);
+      if (audioCtx?.state === "suspended") {
+        audioCtx.resume().catch(() => {});
+      }
+    });
+  }
+
+  attachMedia(element);
+}
+
+function detachMedia(element) {
+  const record = sources.get(element);
+  if (!record?.connected) return;
+
+  try {
+    record.node.disconnect();
+    record.connected = false;
+  } catch {
+    // Best-effort cleanup only.
+  }
+}
+
+function observeRoot(root) {
+  if (!root || observedRoots.has(root)) return;
+  observedRoots.add(root);
+
+  try {
+    observer.observe(root, { childList: true, subtree: true });
+  } catch {
+    // A root may disappear between discovery and observation.
+  }
+}
+
+function discoverShadowRoots(root) {
+  root.querySelectorAll?.("*").forEach((element) => {
+    if (!element.shadowRoot) return;
+    observeRoot(element.shadowRoot);
+    scanTree(element.shadowRoot);
   });
 }
 
-async function loadInitialGain() {
-  const host = getHost();
-  const data = await chrome.storage.local.get([KEY_GLOBAL, keyForHost(host)]);
-  const v = data[keyForHost(host)] ?? data[KEY_GLOBAL] ?? 100;
-  setGainPercent(v);
+function scanTree(root) {
+  if (!root) return;
+
+  if (root instanceof HTMLMediaElement) {
+    monitorMedia(root);
+  }
+
+  root.querySelectorAll?.("audio, video").forEach(monitorMedia);
+  discoverShadowRoots(root);
 }
 
-// 1) Scansione iniziale + valore iniziale
-scanTree(document);
-loadInitialGain();
+function handleAddedNode(node) {
+  if (node instanceof HTMLMediaElement) {
+    monitorMedia(node);
+    return;
+  }
 
-// 2) Nuovi media dinamici
-const mo = new MutationObserver((mutations) => {
-  for (const m of mutations) {
-    for (const n of m.addedNodes) {
-      if (n instanceof HTMLMediaElement) attachMedia(n);
-      else if (n instanceof HTMLElement) scanTree(n);
-    }
-    for (const n of m.removedNodes) {
-      if (n instanceof HTMLMediaElement) detachMedia(n);
-      else if (n instanceof HTMLElement) {
-        n.querySelectorAll?.("audio, video").forEach(detachMedia);
-      }
-    }
+  if (!(node instanceof Element)) return;
+
+  node.querySelectorAll?.("audio, video").forEach(monitorMedia);
+
+  if (node.shadowRoot) {
+    observeRoot(node.shadowRoot);
+    scanTree(node.shadowRoot);
+  }
+
+  discoverShadowRoots(node);
+}
+
+function handleRemovedNode(node) {
+  if (node instanceof HTMLMediaElement) {
+    detachMedia(node);
+    return;
+  }
+
+  if (node instanceof Element) {
+    node.querySelectorAll?.("audio, video").forEach(detachMedia);
+  }
+}
+
+const observer = new MutationObserver((mutations) => {
+  for (const mutation of mutations) {
+    mutation.addedNodes.forEach(handleAddedNode);
+    mutation.removedNodes.forEach(handleRemovedNode);
   }
 });
-mo.observe(document.documentElement, { childList: true, subtree: true });
 
-// 3) Fallback: alcuni siti cambiano player senza mutazioni “pulite”
-setInterval(() => scanTree(document), 2500);
+async function loadInitialGain() {
+  const host = getHost();
+  const hostKey = keyForHost(host);
 
-// 4) Effetto IMMEDIATO: ricevi i messaggi dal popup (iniettati con executeScript)
-window.addEventListener("message", (e) => {
-  if (e.source !== window) return;
-  const d = e.data;
-  if (d && d.__VB_SET_GAIN != null) {
-    setGainPercent(Number(d.__VB_SET_GAIN));
+  try {
+    const data = await chrome.storage.local.get([KEY_GLOBAL, hostKey]);
+    setGainPercent(data[hostKey] ?? data[KEY_GLOBAL] ?? 100);
+  } catch {
+    setGainPercent(100);
   }
+}
+
+chrome.runtime.onMessage.addListener((message) => {
+  if (message?.type !== "VB_SET_GAIN") return;
+  setGainPercent(message.gainPercent);
 });
 
-// 5) Persistenza: se cambia storage (anche da altri tab), aggiorna
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
 
-  const host = getHost();
-  const hostKey = keyForHost(host);
+  const hostKey = keyForHost(getHost());
 
   if (changes[hostKey]) {
     setGainPercent(changes[hostKey].newValue ?? 100);
@@ -131,11 +268,22 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 
   if (changes[KEY_GLOBAL]) {
-    // applica globale solo se non esiste override per-sito
     chrome.storage.local.get([hostKey]).then((data) => {
       if (data[hostKey] == null) {
         setGainPercent(changes[KEY_GLOBAL].newValue ?? 100);
       }
-    });
+    }).catch(() => {});
   }
 });
+
+observeRoot(document.documentElement);
+scanTree(document);
+loadInitialGain();
+
+// Low-frequency fallback for players that create open shadow roots in ways
+// the main document observer cannot reliably discover.
+setInterval(() => {
+  if (document.visibilityState === "visible") {
+    scanTree(document);
+  }
+}, 15000);
