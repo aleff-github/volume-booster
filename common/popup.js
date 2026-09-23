@@ -1,3 +1,5 @@
+const extensionApi = globalThis.browser ?? globalThis.chrome;
+
 const slider = document.getElementById("gain");
 const val = document.getElementById("val");
 const mult = document.getElementById("mult");
@@ -36,7 +38,7 @@ function updateVisuals(value) {
 }
 
 async function getActiveTabContext() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await extensionApi.tabs.query({ active: true, currentWindow: true });
   const tabId = tab?.id ?? null;
 
   try {
@@ -52,7 +54,7 @@ async function sendGain(gainPercent) {
   if (activeTabId == null) return;
 
   try {
-    await chrome.tabs.sendMessage(activeTabId, {
+    await extensionApi.tabs.sendMessage(activeTabId, {
       type: "VB_SET_GAIN",
       gainPercent: clamp(gainPercent, 0, MAX_GAIN_PERCENT)
     });
@@ -66,11 +68,11 @@ async function persistCurrentValue() {
   const gainPercent = clamp(slider.value, 0, MAX_GAIN_PERCENT);
 
   if (useGlobal.checked || !activeHost) {
-    await chrome.storage.local.set({ [KEY_GLOBAL]: gainPercent });
+    await extensionApi.storage.local.set({ [KEY_GLOBAL]: gainPercent });
     return;
   }
 
-  await chrome.storage.local.set({ [keyForHost(activeHost)]: gainPercent });
+  await extensionApi.storage.local.set({ [keyForHost(activeHost)]: gainPercent });
 }
 
 async function setValue(value, { persist = true } = {}) {
@@ -98,7 +100,7 @@ async function loadUI() {
   }
 
   const keys = activeHost ? [KEY_GLOBAL, keyForHost(activeHost)] : [KEY_GLOBAL];
-  const data = await chrome.storage.local.get(keys);
+  const data = await extensionApi.storage.local.get(keys);
   const globalValue = data[KEY_GLOBAL];
   const hostValue = activeHost ? data[keyForHost(activeHost)] : null;
 
@@ -125,16 +127,16 @@ useGlobal.addEventListener("change", async () => {
   }
 
   const hostKey = keyForHost(activeHost);
-  const data = await chrome.storage.local.get([KEY_GLOBAL, hostKey]);
+  const data = await extensionApi.storage.local.get([KEY_GLOBAL, hostKey]);
 
   if (useGlobal.checked) {
-    await chrome.storage.local.remove(hostKey);
+    await extensionApi.storage.local.remove(hostKey);
     await setValue(data[KEY_GLOBAL] ?? 100, { persist: false });
     return;
   }
 
   const inheritedValue = clamp(data[hostKey] ?? data[KEY_GLOBAL] ?? slider.value, 0, MAX_GAIN_PERCENT);
-  await chrome.storage.local.set({ [hostKey]: inheritedValue });
+  await extensionApi.storage.local.set({ [hostKey]: inheritedValue });
   await setValue(inheritedValue, { persist: false });
 });
 
@@ -159,15 +161,15 @@ document.querySelectorAll("[data-preset]").forEach((button) => {
 resetSiteBtn.addEventListener("click", async () => {
   if (!activeHost) return;
 
-  await chrome.storage.local.remove(keyForHost(activeHost));
+  await extensionApi.storage.local.remove(keyForHost(activeHost));
   useGlobal.checked = true;
 
-  const data = await chrome.storage.local.get([KEY_GLOBAL]);
+  const data = await extensionApi.storage.local.get([KEY_GLOBAL]);
   await setValue(data[KEY_GLOBAL] ?? 100, { persist: false });
 });
 
 resetGlobalBtn.addEventListener("click", async () => {
-  await chrome.storage.local.remove(KEY_GLOBAL);
+  await extensionApi.storage.local.remove(KEY_GLOBAL);
 
   if (useGlobal.checked) {
     await setValue(100, { persist: false });

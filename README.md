@@ -1,11 +1,71 @@
 # Volume Booster
 
-A lightweight Chrome/Chromium extension that amplifies HTML audio and video above the normal 100% level using the Web Audio API.
+A lightweight cross-browser WebExtension that amplifies HTML audio and video beyond the normal 100% level using the Web Audio API.
+
+## Browser targets
+
+The repository now has explicit browser-specific targets while keeping the runtime code shared:
+
+```text
+volume-booster/
+├── common/
+│   ├── content.js
+│   ├── popup.html
+│   └── popup.js
+├── chrome/
+│   └── manifest.json
+├── firefox/
+│   └── manifest.json
+├── icons/
+├── scripts/
+│   └── build.py
+├── dist/                 # generated; ignored by Git
+├── README.md
+├── PRIVACY.md
+└── CHANGELOG.md
+```
+
+The shared JavaScript uses `globalThis.browser ?? globalThis.chrome`, so Firefox and Chromium use the same runtime implementation. Browser-specific differences stay in their manifests.
+
+## Build
+
+No Node.js dependencies or external build tools are required. Python 3 is enough:
+
+```bash
+python scripts/build.py
+```
+
+The build validates both manifests, checks the shared files and required icons, then creates:
+
+```text
+dist/
+├── chrome/
+├── firefox/
+├── volume-booster-chrome-1.3.0.zip
+└── volume-booster-firefox-1.3.0.zip
+```
+
+### Test in Chrome / Chromium
+
+1. Run `python scripts/build.py`.
+2. Open `chrome://extensions`.
+3. Enable **Developer mode**.
+4. Choose **Load unpacked**.
+5. Select `dist/chrome/`.
+
+### Test in Firefox
+
+1. Run `python scripts/build.py`.
+2. Open `about:debugging#/runtime/this-firefox`.
+3. Choose **Load Temporary Add-on…**.
+4. Select `dist/firefox/manifest.json`.
+
+The Firefox manifest contains a dedicated Gecko extension ID and declares that the extension does not collect or transmit data.
 
 ## Features
 
 - Gain control from 0% to 1000%.
-- Global volume level plus per-site overrides.
+- Global volume plus per-site overrides.
 - Presets for common boost levels.
 - Limiter-style compression above 100% to reduce clipping peaks.
 - Automatic detection of dynamically added `<audio>` and `<video>` elements.
@@ -18,7 +78,7 @@ High gain can become unexpectedly loud and can damage hearing or speakers. Incre
 
 ## How it works
 
-The content script detects compatible `HTMLMediaElement` instances and routes them through a Web Audio graph:
+Compatible media is routed locally through:
 
 ```text
 HTMLMediaElement
@@ -32,71 +92,56 @@ DynamicsCompressorNode
 AudioContext.destination
 ```
 
-At 100% and below, the compressor ratio is set to 1:1 so normal playback is not intentionally compressed. Above 100%, a high-ratio compressor is enabled near 0 dB to reduce clipping peaks.
+At 100% and below, the compressor ratio is 1:1 so normal playback is not intentionally compressed. Above 100%, high-ratio compression is enabled near 0 dB to reduce clipping peaks.
 
-The extension creates an `AudioContext` lazily, only after a compatible media element is found.
+The `AudioContext` is created lazily only after compatible media is found.
 
-## Per-site and global settings
+## Global and per-site settings
 
-Settings are stored locally with `chrome.storage.local`.
+Settings are stored locally with the WebExtensions storage API.
 
 - **Global enabled:** the slider edits the global gain.
 - **Global disabled:** the current site receives its own override.
-- **Reset site:** removes the site override and returns the site to the global value.
-- **Reset global:** returns the global value to 100%.
+- **Reset site:** removes that override and returns to the global value.
+- **Reset global:** resets the global value to 100%.
 
-No settings are transmitted to a server.
+No settings are sent to a server.
 
-## Browser permissions
+## Permissions
 
-The extension requests:
+Both builds request:
 
-- `storage` to save the global value and per-site overrides locally.
-- `activeTab` so the popup can identify the tab the user invoked the extension on.
+- `storage`: stores gain settings locally.
+- `activeTab`: lets the popup identify and message the tab where the user invoked the extension.
 
-The content script uses `<all_urls>` because media can appear on any normal website. Restricted browser pages such as `chrome://` pages cannot be modified.
+A declarative content script runs on normal webpages because media can appear on any website. Restricted browser pages cannot be modified.
 
 ## Known limitations
 
-The current implementation operates on page media elements rather than the final audio output of the browser tab. As a result, some sources cannot be boosted, including certain:
+The current implementation works at the HTML media/Web Audio layer rather than processing the final tab output. Some sources therefore cannot be boosted reliably, including certain:
 
 - cross-origin media without CORS support;
 - DRM-protected players;
 - custom audio pipelines;
 - media inside closed Shadow DOM roots;
-- browser-internal/restricted pages.
+- browser-internal or otherwise restricted pages.
 
-For cross-origin media without CORS, the extension deliberately avoids Web Audio routing when it can detect that doing so could silence playback.
+For detectable cross-origin media without CORS, the extension avoids Web Audio routing when doing so could silence playback.
 
-A future architecture may use `chrome.tabCapture` to process the final audio stream of the active tab instead.
-
-## Development
-
-1. Clone this repository.
-2. Open `chrome://extensions` in Chrome or Chromium.
-3. Enable **Developer mode**.
-4. Select **Load unpacked**.
-5. Choose the repository directory.
-
-After changing extension files, reload the extension from `chrome://extensions` and reload the test page.
-
-## Project structure
-
-```text
-volume-booster/
-├── content.js       # Media discovery and Web Audio processing
-├── popup.html       # Popup interface
-├── popup.js         # Popup state, storage and extension messaging
-├── manifest.json    # Manifest V3 configuration
-├── icons/           # Extension icons
-├── PRIVACY.md       # Privacy information
-└── CHANGELOG.md     # Release notes
-```
+A future major version may evaluate a tab-capture architecture for browsers that support it appropriately.
 
 ## Privacy
 
 Volume Booster does not collect or transmit browsing history, audio, page content, personal information, or usage analytics. See [PRIVACY.md](PRIVACY.md).
 
-## Contributing
+## Development
 
-Bug reports and focused pull requests are welcome. For audio bugs, include the affected site, browser version, whether the media is embedded in an iframe, and whether the problem occurs at 100% or only above 100%.
+Source changes should normally be made in `common/`. Browser-specific changes belong in `chrome/manifest.json` or `firefox/manifest.json`.
+
+After editing:
+
+```bash
+python scripts/build.py
+```
+
+Then reload the corresponding generated directory in the browser.

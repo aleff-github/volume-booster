@@ -2,6 +2,14 @@
 
 ## 1.3.0
 
+### Cross-browser packaging
+
+- Added dedicated `chrome/` and `firefox/` targets.
+- Moved shared runtime code to `common/` to avoid maintaining duplicate browser implementations.
+- Added a zero-dependency Python build script that validates both targets and creates unpacked directories plus ZIP packages.
+- Added a Firefox Manifest V3 Gecko ID and explicit `data_collection_permissions: { required: ["none"] }` declaration for AMO.
+- Added a small WebExtensions namespace compatibility layer (`browser` on Firefox, `chrome` on Chromium).
+
 ### Changed
 
 - Replaced page-level `window.postMessage` control messages with Chrome extension messaging.

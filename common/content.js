@@ -1,5 +1,9 @@
 // Volume Booster content script (all frames)
 
+// Firefox exposes the standard `browser` namespace; Chromium exposes `chrome`.
+// Both support Promise-based WebExtension APIs used by this extension.
+const extensionApi = globalThis.browser ?? globalThis.chrome;
+
 const KEY_GLOBAL = "gainPercent::GLOBAL";
 const keyForHost = (host) => `gainPercent::HOST::${host}`;
 const MAX_GAIN_PERCENT = 1000;
@@ -245,19 +249,19 @@ async function loadInitialGain() {
   const hostKey = keyForHost(host);
 
   try {
-    const data = await chrome.storage.local.get([KEY_GLOBAL, hostKey]);
+    const data = await extensionApi.storage.local.get([KEY_GLOBAL, hostKey]);
     setGainPercent(data[hostKey] ?? data[KEY_GLOBAL] ?? 100);
   } catch {
     setGainPercent(100);
   }
 }
 
-chrome.runtime.onMessage.addListener((message) => {
+extensionApi.runtime.onMessage.addListener((message) => {
   if (message?.type !== "VB_SET_GAIN") return;
   setGainPercent(message.gainPercent);
 });
 
-chrome.storage.onChanged.addListener((changes, area) => {
+extensionApi.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
 
   const hostKey = keyForHost(getHost());
@@ -268,7 +272,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 
   if (changes[KEY_GLOBAL]) {
-    chrome.storage.local.get([hostKey]).then((data) => {
+    extensionApi.storage.local.get([hostKey]).then((data) => {
       if (data[hostKey] == null) {
         setGainPercent(changes[KEY_GLOBAL].newValue ?? 100);
       }
