@@ -1,0 +1,32 @@
+{
+   "action": {
+      "default_icon": {
+         "128": "icons/icon128.png",
+         "16": "icons/icon16.png",
+         "32": "icons/icon32.png",
+         "48": "icons/icon48.png"
+      },
+      "default_popup": "popup.html",
+      "default_title": "Volume Booster"
+   },
+   "content_scripts": [ {
+      "all_frames": true,
+      "js": [ "content.js" ],
+      "matches": [ "\u003Call_urls>" ],
+      "run_at": "document_idle"
+   } ],
+   "description": "Amplify the page audio beyond 100% with anti-clipping limiter. Use with caution to avoid distortion and excessive volume.",
+   "host_permissions": [ "\u003Call_urls>" ],
+   "icons": {
+      "128": "icons/icon128.png",
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png"
+   },
+   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAk3caLEv0ZdtjTVrwsS2432/rKCWEmmQgqk/rkCVaZMpO6tUANTrG0FFs1IEusujmOBlTYiK6wwa5NbD2zADdyHZdRKb9hT+tLiKUfSsgCrEp8EipXEhjPbhHGR8YN0/gfEIlzw25Np/OIDNSgfAWCzYrBxSrzO71rOGca9dHOHgz4MedD9mMUOn1gxmWNlH+MTXNOX9dzui14c1DkSQlGovvBG4gfLfCFCSNp7a5Ox9sWfvUl/E5u7Y91YTbggUExfGU6DwXrwIevJKwrHHCXC5jAnvs2apNtpu3+HwYX8PCb6pPbItz1ai9gsAFwas1veastrSgA8Am+ICYh5uF+wIDAQAB",
+   "manifest_version": 3,
+   "name": "Volume Booster – Audio over 100%",
+   "permissions": [ "storage", "scripting", "activeTab" ],
+   "update_url": "https://clients2.google.com/service/update2/crx",
+   "version": "1.2.0"
+}
